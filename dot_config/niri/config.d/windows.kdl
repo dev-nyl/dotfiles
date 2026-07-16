@@ -6,6 +6,33 @@ layer-rule {
 window-rule {
 	draw-border-with-background false
 	clip-to-geometry true
+	background-effect {
+		xray true
+		blur true
+	}
+}
+
+window-rule {
+	match is-focused=true
+	background-effect {
+		xray true
+		blur true
+		saturation 1
+		noise 0
+	}
+}
+
+window-rule {
+	match is-focused=false
+	opacity 0.9
+}
+
+window-rule {
+	match is-floating=true
+	shadow {
+		spread 8
+		offset x=16 y=16
+	}
 }
 
 window-rule {
@@ -13,12 +40,7 @@ window-rule {
 	open-floating true
 	open-focused true
 	
-	shadow {
-		off
-	}
-
 	background-effect {
-		xray true
 		blur false
 		saturation 1
 		noise 0

@@ -15,9 +15,9 @@ layout {
 
 	focus-ring {
 		on
-		width 3
+		width 1
 
-		active-color "#592720"
+		active-color "#ffffff"
 		inactive-color "#000000"
 
 		// active-gradient from="#592720" to="ff0000" angle=45
@@ -27,7 +27,7 @@ layout {
 		off
 		width 6
 
-		active-color "592720"
+		active-color "ffffff"
 		inactive-color "#000000"
 		urgent-color "#ff0000"
 
@@ -36,13 +36,13 @@ layout {
     	}
 
 	shadow {
-		off
+		on
 
-		draw-behind-window true
-		softness 30
-		spread 2
-		offset x=0 y=0
-		color "#0004"
+		draw-behind-window false
+		softness 0
+		spread 3
+		offset x=6 y=6
+		color "#0008"
 	}
 	
 	tab-indicator {
