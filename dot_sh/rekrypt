@@ -1,0 +1,387 @@
+#!/bin/bash
+
+cmd=("$@")
+headless=0
+force=0
+backup=0
+confname=0
+
+ascii() {
+	echo
+	echo "-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-"
+	echo " ___     _  __              _   "
+	echo "| _ \\___| |/ /_ _ _  _ _ __| |_ "
+	echo "|   / -_) ' <| '_| || | '_ \\  _|"
+	echo "|_|_\\___|_|\\_\\_|  \\_, | .__/\\__|"
+	echo "                  |__/|_|       "
+	echo "-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-"
+	echo
+}
+
+ascii
+
+if [[ ! $EUID == 0 ]]; then
+   echo "[!] run this as root fuckass"
+   echo "[/] aborting due to pebkac error"
+   exit 1
+fi
+
+ls /boot|grep "initramfs" &> /dev/null
+if [[ ! $? == 0 ]]; then
+	echo "[!] jesus h christ are you trying to"
+	echo "[.] run this with /boot unmounted"
+	echo "[.] genuinely unbelievable"
+	echo "[/] aborting due to pebkac error"
+	exit 1
+fi
+
+### parsing
+
+flg=()
+flgraw=()
+prs-flg() {
+	local arg=$1
+	case "$arg" in
+		"a" | "attached") flg+=("HEADLESS") ;;
+		"b" | "backup") flg+=("BACKUP") ;;
+		"c" | "configured-names") flg+=("CONFNAME") ;;
+		"f" | "force") flg+=("FORCE") ;;
+		"h" | "help") flg+=("HELP") ;;
+		*) flg+=("unknown") ;;
+	esac
+}
+
+for i in ${!cmd[@]}; do
+	if [[ ${cmd[$i]:0:1} == "-" ]]; then
+		if [[ ! ${cmd[$i]:1:1} == '-' ]]; then
+			for o in $(echo -n ${cmd[$i]:1} | grep -o .); do
+				flgraw+=("$o")
+				prs-flg "$o"
+			done
+		else
+			flgraw+=("${cmd[$i]:1}")
+			prs-flg "${cmd[$i]:2}"
+		fi
+		unset "cmd[$i]"
+	fi
+done
+
+cmd=("${cmd[@]}")
+if [ "${#flg[@]}" == 0 ]; then
+	flg=("none")
+fi
+
+if [[ "${#cmd[@]}" == 0 && "$flg" == "none" ]]; then
+	flg=("HELP")
+fi
+
+for i in "${!flg[@]}"; do
+	case "${flg[$i]}" in
+		"none")
+			;;
+		"unknown")
+			echo "[!] unknown flag -${flgraw[$i]}"
+			echo "[/] aborting due to error"
+			exit 1
+			;;
+		"HELP")
+			echo "[.] USAGE: rekrypt [-OPTIONS] [CRYPTOMAPPER]"
+			echo "[,] -a | --attached"
+			echo "[.]    runs in headless mode for drives with"
+			echo "[.]    an attached header"
+			echo "[,] -b | --backup"
+			echo "[.]    creates a backup of all affected files"
+			echo "[.]    at \$CRYPTDIR.bak before proceeding to"
+		        echo "[.]    do anything"
+			echo "[,] -c | --configured-names"
+			echo "[.]    reads keyfile and header name directly"
+			echo "[.]    from the config instead of presuming"
+			echo "[.]    the cryptomapper name plus some suffix"
+			echo "[,] -f | --force"
+			echo "[.]    unsafely bypasses all manual inputs and"
+			echo "[.]    never prompts for user confirmation"
+			echo "[,] -h | --help"
+			echo "[.]    prints this message and exits"
+			echo && exit 0
+			;;
+		"HEADLESS") headless=1 ;;
+		"FORCE") force=1 ;;
+		"BACKUP") backup=1 ;;
+		"CONFNAME") confname=1 ;;
+		*)
+			echo "[!] catastrophic error at flag parsing"
+			echo "[/] aborting due to error"
+			;;
+	esac
+done
+
+### init
+MAPPER="${cmd[0]}"
+
+fail="unset"
+loadcfg() {
+	local key=$1
+	local grepper="(?<=$key:).+"
+	local var=$2
+	local cfg="$(cat /etc/rekrypt/rekrypt.conf | grep -Po $grepper)"
+	if [[ "$cfg" == "" ]]; then
+		case $key in
+			"crypt-directory") cfg="/root/crypt" ;;
+			"key-suffix") cfg="key.img" ;;
+			"header-suffix") cfg="header.img" ;;
+			"itertime") cfg="3000" ;;
+			"cipher") cfg="aes-xts-plain64" ;;
+			"hash") cfg="sha512" ;;
+			"pbkdf") cfg="argon2id" ;;
+			"shred-iterations") cfg="32" ;;
+			"key-size") cfg="8" ;;
+			"target-disk-override") cfg="none" ;;
+			"headless-slot-override") cfg="none" ;;
+			"confname-key")
+				echo "[!] running in confname mode but no confname-key set"
+				echo "[.] like probably dont do that"
+				echo "[/] aborting due to error"
+				exit 1
+				;;
+			"confname-header")
+				echo "[!] running in confname mode but no confname-header set"
+				echo "[.] did you mean to activate headless mode"
+				echo "[/] aborting due to error"
+				exit 1
+				;;
+			*)
+				echo "[!] catastrophic error at flag interpretation"
+				echo "[/] aborting due to error"
+				exit 1
+				;;
+		esac
+
+		eval "$var=\"$cfg\""
+		echo "[!] config key $key not found"
+		echo "[.] loading default value \"$cfg\""
+	else
+		eval "$var=\"$cfg\""
+		echo "[.] $key loaded as \"$cfg\""
+	fi
+}
+
+echo "[.] cryptomapper selected: [ $MAPPER ]"
+if [[ "$headless" == 1 ]]; then echo "[.] rekrypt is running in headless mode"; fi
+if [[ "$confname" == 1 ]]; then echo "[.] rekrypt is running in nameconf mode"; fi
+if [[ "$backup" == 1 ]]; then echo "[.] rekrypt is running in backup mode"; fi
+if [[ "$force" == 1 ]]; then
+	if [[ "$backup" == 1 ]]; then
+		echo "[.] rekrypt is running in force mode"
+	else
+		echo "[!] rekrypt is running in force mode WITHOUT BACKUPS"
+		echo "[.] this is an incredibly stupid thing to do but whatever"
+	fi
+fi
+
+# importing
+echo && echo "[-] importing variables from config"
+loadcfg "crypt-directory" "CRYPTDIR"
+loadcfg "key-suffix" "KEYSUFX"
+loadcfg "header-suffix" "HEADERSUFX"
+loadcfg "itertime" "ITERTIME"
+loadcfg "cipher" "CIPHER"
+loadcfg "hash" "HASH"
+loadcfg "pbkdf" "PBKDF"
+loadcfg "shred-iterations" "SHRED"
+loadcfg "key-size" "KEYSIZE"
+loadcfg "target-disk-override" "diskov"
+if [[ "$confname" == 1 ]]; then
+	loadcfg "confname-key" "KEYFILE"
+	loadcfg "confname-header" "HEADER"
+fi
+if [[ "$headless" == 1 ]]; then loadcfg "headless-slot-override" "slotov"; fi
+
+echo && echo "[-] importing miscellaneous variables"
+if [[ $diskov == "none" ]]; then
+	DISK=$(dmsetup deps -o devname /dev/mapper/$MAPPER | grep -Po '(?<=:).*?\(\K[^)]+(?=\))')
+	if [ ! $? == 0 ]; then
+		echo "[!] failed to discover underlying disk"
+		echo "[/] aborting due to error"
+		exit 1
+	fi
+else
+	DISK=$diskov
+fi
+echo "[.] underlying disk read as [ $DISK ]"
+
+# file checks
+echo && echo "[-] checking if requisite files and devices exist"
+ls /dev/mapper/$MAPPER &> /dev/null
+if [ $? == 0 ]; then
+	echo "[.] confirmed existence of mapper at [ /dev/mapper/$MAPPER ]"
+else
+	echo "[!] mapper [ $MAPPER ] does not exist"
+	echo "[/] aborting due to error"
+	exit 1
+fi
+
+if [[ "$confname" == 0 ]]; then KEYFILE="$MAPPER-$KEYSUFX"; fi
+ls $CRYPTDIR/$KEYFILE &> /dev/null
+if [ $? == 0 ]; then
+	echo "[.] confirmed existence of keyfile at [ $CRYPTDIR/$KEYFILE ]"
+else
+	echo "[!] keyfile at [ $CRYPTDIR/$KEYFILE ] does not exist"
+	echo "[/] aborting due to error"
+	exit 1
+fi
+
+if [[ "$headless" == 0 ]]; then
+	if [[ "$confname" == 0 ]]; then HEADER="$MAPPER-$HEADERSUFX"; fi
+	ls $CRYPTDIR/$HEADER &> /dev/null
+	if [ $? == 0 ]; then
+		echo "[.] confirmed existence of header at [ $CRYPTDIR/$HEADER ]"
+	else
+		echo "[!] header at [ $CRYPTDIR/$HEADER ] does not exist"
+		echo "[/] aborting due to error"
+		exit 1
+	fi
+else
+	if [[ "$slotov" == "none" ]]; then
+		echo && echo "[-] headless mode only: divining the keyslot"
+		SLOT=$(cryptsetup open -v --test-passphrase --key-file $CRYPTDIR/$KEYFILE /dev/$DISK | grep -oP '(?<=slot )\d+(?= unlocked)')
+		if [ $? == 0 ]; then
+			echo "[.] keyslot divined: $SLOT"
+		else
+			echo "[!] failed to grab keyslot"
+			echo "[/] aborting due to error"
+			exit 1
+		fi
+	fi
+fi
+
+if [[ "$force" == 0 ]]; then
+	echo && echo "[?] type YES in all caps to confirm these selections"
+	read -p "[:] " prompt
+	
+	if [[ $prompt == "YES" ]]; then
+		echo "[,] continuing"
+	else
+		echo "[/] aborting due to user"
+		exit 0
+	fi
+fi
+
+echo && echo "--- BEGIN SHELL COMMAND DUMP ---"
+if [[ "$backup" == 1 ]]; then
+	echo "# mkdir $CRYPTDIR.bak/"
+	echo "# cp $CRYPTDIR/$KEYFILE $CRYPTDIR.bak/$KEYFILE"
+	if [[ "$headless" == 0 ]]; then
+		echo "# cp $CRYPTDIR/$HEADER $CRYPTDIR.bak/$HEADER"
+	fi
+fi
+echo "# mv $CRYPTDIR/$KEYFILE $CRYPTDIR/XPRD_$KEYFILE"
+echo "# dd if=/dev/urandom of=$CRYPTDIR/$KEYFILE bs=512 count=$KEYSIZE iflag=fullblock"
+if [[ "$headless" == 1 ]]; then	
+	echo "# cryptsetup -M luks2 -c $CIPHER -h $HASH -i $ITERTIME --pbkdf $PBKDF --key-file $CRYPTDIR/XPRD_$KEYFILE --key-slot $SLOT luksChangeKey /dev/$DISK $CRYPTDIR/$KEYFILE"
+	echo "# cryptsetup open -v --test-passphrase --key-file $CRYPTDIR/$KEYFILE /dev/$DISK"
+else
+	echo "# cryptsetup -M luks2 -c $CIPHER -h $HASH -i $ITERTIME --pbkdf $PBKDF --header $CRYPTDIR/$HEADER --key-file $CRYPTDIR/XPRD_$KEYFILE luksChangeKey /dev/$DISK $CRYPTDIR/$KEYFILE"
+	echo "# cryptsetup open -v --test-passphrase --header $CRYPTDIR/$HEADER --key-file $CRYPTDIR/$KEYFILE /dev/$DISK"
+fi
+echo "# shred -zu -n $SHRED $CRYPTDIR/XPRD_$KEYFILE"
+echo "# mkinitcpio -P"
+echo "--- END SHELL COMMAND DUMP ---"
+
+if [[ "$force" == 0 ]]; then
+	echo && echo "[.] these are the commands this program will run"
+	echo "[?] take a moment to review them and then type START"
+	read -p "[:] " prompt
+	
+	if [[ $prompt == "START" ]]; then
+		echo "[,] continuing"
+	else
+		echo "[/] cancelled due to user"
+		exit 0
+	fi
+fi
+
+### main
+if [[ "$backup" == 1 ]]; then
+	ls $CRYPTDIR.bak &> /dev/null
+	if [[ ! $? == 0 ]]; then 
+		mkdir $CRYPTDIR.bak
+	fi
+	cp $CRYPTDIR/$KEYFILE $CRYPTDIR.bak/$KEYFILE
+	if [[ ! $? == 0 ]]; then
+		echo "[!] failed to create backup of keyfile; cannot proceed"
+		echo "[/] aborted due to error"
+		exit 1
+	elif [[ "$headless" == 0 ]]; then
+		cp $CRYPTDIR/$HEADER $CRYPTDIR.bak/$HEADER
+		if [[ ! $? == 0 ]]; then
+			echo "[!] failed to create backup of header; cannot proceed"
+			echo "[/] aborted due to error"
+			exit 1
+		fi
+	fi
+fi
+
+mv $CRYPTDIR/$KEYFILE $CRYPTDIR/XPRD_$KEYFILE
+if [ ! $? == 0 ]; then
+	echo "[!] failed to rename keyfile; cannot proceed"
+	echo "[/] aborted due to error"
+	exit 1
+fi
+
+dd if=/dev/urandom of=$CRYPTDIR/$KEYFILE bs=512 count=$KEYSIZE iflag=fullblock
+
+if [[ "$headless" == 1 ]]; then
+	cryptsetup -M luks2 -c $CIPHER -h $HASH -i $ITERTIME --pbkdf $PBKDF --key-file $CRYPTDIR/XPRD_$KEYFILE --key-slot $SLOT luksChangeKey /dev/$DISK $CRYPTDIR/$KEYFILE
+	cryptsetup open -v --test-passphrase --key-file $CRYPTDIR/$KEYFILE /dev/$DISK
+	cryptstatus="$?"
+else
+	cryptsetup -v -M luks2 -c $CIPHER -h $HASH -i $ITERTIME --pbkdf $PBKDF --header $CRYPTDIR/$HEADER --key-file $CRYPTDIR/XPRD_$KEYFILE luksChangeKey /dev/$DISK $CRYPTDIR/$KEYFILE
+	cryptsetup open -v --test-passphrase --header $CRYPTDIR/$HEADER --key-file $CRYPTDIR/$KEYFILE /dev/$DISK
+	cryptstatus="$?"
+fi
+
+# safety break
+if [[ ! "$cryptstatus" == 0 ]]; then
+	ascii
+	echo "[!] a failed attempt to change the encryption key was detected"
+	echo "[.] the program will not proceed"
+	echo "[.] the original keyfile is located at [ $CRYPTDIR/XPRD_$KEYFILE ]"
+	if [[ "$backup" == 1 ]]; then
+		echo "[.] there is also a backup at [ $CRYPTDIR.bak/$KEYFILE ]"
+	fi
+	echo "[/] aborting due to error"
+	exit 1
+else
+	if [[ "$force" == 0 ]]; then
+		ascii
+		echo "[.] an attempt was made to change the encryption key"
+		echo "[.] if you arent absolutely certain it succeeded the next command WILL permanently make your data unreadable"
+		echo "[.] the verbose output as well as the --test-passphrase check should give you enough info to know if it worked but you can manually run cryptsetup with --test-passphrase on another terminal if you want to be sure"
+		echo "[?] type CONTINUE if youre ready to move on"
+		read -p "[:] " finalprompt
+	
+		if [[ $finalprompt == "CONTINUE" ]]; then
+			echo "[,] continuing"
+		else
+			echo "[/] aborting due to user"
+			exit 0
+		fi
+	fi
+fi
+
+# the dangerous commands
+shred -zu -n $SHRED $CRYPTDIR/XPRD_$KEYFILE
+if [ ! $? == 0 ]; then
+	echo "[!] failed to shred expired keyfile; cannot proceed"
+	echo "[/] aborted due to error"
+	exit 1
+fi
+
+mkinitcpio -P
+
+# finale
+ascii
+echo "[.] all set"
+echo "[.] hopefully that didnt fuck anything up"
+echo "[/] done"
+exit 0
